@@ -94,11 +94,20 @@ Output: `src/bin/Release/RDTrainer.dll`.
 
 > A major game update may require adjustments; if it fails to load, first confirm your BepInEx version matches this guide.
 
-## Credits & Disclaimer
+## Disclaimer
 
-- *Rhythm Doctor* © [7th Beat Games](https://rhythmdr.com/) — this project is **not affiliated** with them and contains/distributes none of the game's assets or code.
+- **Unofficial.** This is an unofficial, fan-made third-party tool, **not affiliated with, authorized, or endorsed by** the game's developer [7th Beat Games](https://rhythmdr.com/). *Rhythm Doctor* and all related names, trademarks, art, and music are the property of 7th Beat Games.
+- **No game content.** This repository contains **only the author's own plugin code** — it includes and distributes no game source, DLLs, audio, images, or other assets. At runtime it only calls the game's **own existing** public functions via BepInEx / HarmonyX; no memory scanning.
+- **Single-player only.** For **offline single-player** fun, practice, and recording only. Do **not** use it online, for leaderboards, in competition, or in any way that affects fairness for other players.
+- **Respect the EULA.** Modding the game may violate its End-User License Agreement / Terms of Service. Use is entirely at your own discretion, and you are responsible for complying with those terms; any consequences (account penalties, save corruption, etc.) are your own.
+- **Achievements write to your account.** "Unlock all achievements" writes to your Steam account; pair it with "disable achievement granting" if that matters to you.
+- **Use at your own risk.** Provided "as is", without warranty of any kind. The author is not liable for any direct or indirect damage arising from its use.
+- **Free.** Free and open-source ([MIT](LICENSE)); **reselling is forbidden.** If you paid for it, you were scammed — get it free from this repository.
+- **Rights holders.** If a rights holder considers anything here improper, please reach out via a GitHub Issue and the author will comply with takedown or changes.
+
+## Credits
+
 - Mod frameworks: [BepInEx](https://github.com/BepInEx/BepInEx) / [HarmonyX](https://github.com/BepInEx/HarmonyX).
-- The trainer only calls the game's **already-existing** flags and methods (such as the editor's built-in autoplay flag). It is a single-player toy — **use at your own risk**.
-- "Unlock all achievements" writes to your Steam account; pair it with "disable achievement granting" if that matters to you.
+- Shares its approach with the sibling project *ADOFAI Trainer* (also by 7th Beat Games).
 
 Licensed under [MIT](LICENSE).
