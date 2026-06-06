@@ -1,20 +1,18 @@
 using System;
-using BepInEx;
-using BepInEx.Configuration;
-using BepInEx.Logging;
+using System.Linq;
 using HarmonyLib;
 using UnityEngine;
 
-namespace RDTrainer
+namespace RDTrainerMac
 {
-    // In-game trainer for Rhythm Doctor (单机). Insert opens an overlay with three tabs:
-    // 普通玩家 (recording / QoL), 开发者 (dev unlocks), 高级 (experimental / scene-jump).
-    [BepInPlugin(Guid, Name, Version)]
-    public class Plugin : BaseUnityPlugin
+    // In-game trainer for Rhythm Doctor (单机), macOS-native. Insert opens an overlay with four
+    // tabs: 普通玩家 (recording / QoL), 开发者 (dev unlocks), 高级 (experimental), 关卡直达 (level jump).
+    // This is the BepInEx BaseUnityPlugin ported to a plain MonoBehaviour hosted by Loader.
+    public class Trainer : MonoBehaviour
     {
         public const string Guid = "com.cohen.rdtrainer";
         public const string Name = "RD Trainer (节奏医生修改器)";
-        public const string Version = "2.2.0";
+        public const string Version = "2.20m";
 
         // 防倒卖水印：此串同时用于「显示」与「启动完整性校验」。改动或删除它会导致 SHA256 校验失败、
         // 整个修改器拒绝工作（不挂补丁、不应用任何功能）。谁删水印谁失效。
@@ -22,12 +20,12 @@ namespace RDTrainer
         private const string ExpectedSig = "aa5b99cb20d0aee2d25454b831b309f2ac6432c6a41ed393ec43de203b4043c1";
         internal static bool IntegrityOK;
 
-        internal static ManualLogSource Log;
-        private static ConfigEntry<KeyboardShortcut> _menuKey;
+        private static readonly KeyCode MenuKey = KeyCode.F3;
 
         private bool _menuOpen;
         private int _tab;
         private Rect _win = new Rect(24, 24, 480, 620);
+        private Rect _hintWin = new Rect(20, 20, 300, 70);
         private Vector2 _scroll;
         private string _lvFilter = "";
         private Font _cjk;
@@ -41,22 +39,27 @@ namespace RDTrainer
 
         private void Awake()
         {
-            Log = Logger;
-
             // Anti-resale integrity gate: the watermark must be intact, or the trainer refuses to
             // function (no Harmony patches, no feature application, no menu). 删/改水印即失效。
             IntegrityOK = Sig(Watermark) == ExpectedSig;
             if (!IntegrityOK)
             {
-                Log.LogError("完整性校验失败：水印被篡改，修改器已禁用。" +
-                             "请从 github.com/Cohenjikan/RhythmDoctorTrainer 获取免费正版。");
+                Log.Error("完整性校验失败：水印被篡改，修改器已禁用。" +
+                          "请从 github.com/Cohenjikan/RhythmDoctorTrainer 获取免费正版。");
                 return; // do NOT patch or enable anything
             }
 
-            _menuKey = Config.Bind("General", "MenuKey", new KeyboardShortcut(KeyCode.Insert),
-                "Hotkey to open/close the trainer overlay.");
-            new Harmony(Guid).PatchAll();
-            Log.LogInfo($"{Name} v{Version} loaded · {Watermark} · Menu key = {_menuKey.Value}");
+            // Patch each [HarmonyPatch] class independently so a single failure (e.g. an
+            // unpatchable method on a given runtime) can't take down the rest of the trainer.
+            var harmony = new Harmony(Guid);
+            int ok = 0, fail = 0;
+            foreach (var t in typeof(Trainer).Assembly.GetTypes())
+            {
+                if (t.GetCustomAttributes(typeof(HarmonyPatch), true).Length == 0) continue;
+                try { harmony.CreateClassProcessor(t).Patch(); ok++; }
+                catch (Exception e) { fail++; Log.Error($"patch {t.Name} failed: {e.Message}"); }
+            }
+            Log.Info($"{Name} v{Version} loaded · {Watermark} · Menu key = {MenuKey} · patches ok={ok} fail={fail}");
         }
 
         private static string Sig(string s)
@@ -75,11 +78,11 @@ namespace RDTrainer
             if (!IntegrityOK) return;
             try
             {
-                if (_menuKey.Value.IsDown()) _menuOpen = !_menuOpen;
+                if (Input.GetKeyDown(MenuKey)) _menuOpen = !_menuOpen;
                 if (_menuOpen) { Cursor.visible = true; Cursor.lockState = CursorLockMode.None; }
                 ApplyState();
             }
-            catch (Exception e) { Log.LogError("Update: " + e); }
+            catch (Exception e) { Log.Error("Update: " + e); }
         }
 
         private void ApplyState()
@@ -95,9 +98,7 @@ namespace RDTrainer
 
             // Speed: the engine applies it at level Start via `RDTime.speed = scnGame.levelSpeed`,
             // which then scales bpm AND the song's pitch consistently. So we arm the static
-            // `scnGame.levelSpeed`; it takes effect on the next level start / restart. Writing
-            // RDTime.speed live does NOT work — bpm + currentSong.pitch are fixed at load, so a
-            // mid-song change just desyncs.
+            // `scnGame.levelSpeed`; it takes effect on the next level start / restart.
             try
             {
                 if (Cheats.speedOverride)
@@ -128,19 +129,50 @@ namespace RDTrainer
         private void EnsureFont()
         {
             if (_cjk != null) return;
-            try { _cjk = Font.CreateDynamicFontFromOSFont(
-                new[] { "Microsoft YaHei UI", "Microsoft YaHei", "SimHei", "SimSun", "Arial" }, 14); }
-            catch { }
+            // CreateDynamicFontFromOSFont silently yields an empty (glyph-less) font if the FIRST
+            // name doesn't exist on this OS, so pick only names actually present (macOS reports
+            // "Heiti SC" etc., NOT "PingFang SC"). Order = preferred Simplified-Chinese families.
+            string[] inst;
+            try { inst = Font.GetOSInstalledFontNames() ?? new string[0]; } catch { inst = new string[0]; }
+            var prefer = new[] { "PingFang SC", "Heiti SC", "Hiragino Sans GB", "Songti SC", "STSong", "STHeiti", "Arial Unicode MS" };
+            var pick = prefer.Where(p => Array.IndexOf(inst, p) >= 0).ToArray();
+            try
+            {
+                _cjk = pick.Length > 0
+                    ? Font.CreateDynamicFontFromOSFont(pick, 16)
+                    : Font.CreateDynamicFontFromOSFont("Arial Unicode MS", 16);
+            }
+            catch (Exception e) { Log.Error("font create failed: " + e.Message); }
         }
 
         private void OnGUI()
         {
-            if (!IntegrityOK || !_menuOpen) return;
+            if (!IntegrityOK) return;
             EnsureFont();
             var prev = GUI.skin.font;
             if (_cjk != null) GUI.skin.font = _cjk;
-            _win = GUILayout.Window(740181, _win, DrawWindow, $"节奏医生修改器 v{Version}  ·  免费开源 github.com/Cohenjikan/RhythmDoctorTrainer  ·  [{_menuKey.Value}] 开/关");
+
+            // Top-left "game modified" hint — drawn as a Window (same mechanism as the menu, which
+            // renders text correctly). Fixed position; shown only on non-level scenes while the menu
+            // is CLOSED (complementary to the menu). Hidden inside a level.
+            if (InNonLevelScene() && !_menuOpen)
+                GUILayout.Window(740182, _hintWin, DrawHintWindow, "节奏医生修改器");
+
+            if (_menuOpen)
+                _win = GUILayout.Window(740181, _win, DrawWindow, $"节奏医生修改器 v{Version}");
             GUI.skin.font = prev;
+        }
+
+        // True on any non-level scene (menu/hub/level-select/editor). In a level scnGame.instance is set.
+        private static bool InNonLevelScene()
+        {
+            try { return scnGame.instance == null; } catch { return true; }
+        }
+
+        private void DrawHintWindow(int id)
+        {
+            GUILayout.Label("✓ 游戏已修改");
+            GUILayout.Label($"按 {MenuKey} 打开 / 关闭 修改器菜单");
         }
 
         private void DrawWindow(int id)
@@ -152,6 +184,7 @@ namespace RDTrainer
             if (GUILayout.Toggle(_tab == 3, " 关卡直达 ", "Button")) _tab = 3;
             GUILayout.EndHorizontal();
             GUILayout.Label("免费开源 · 严禁倒卖 · github.com/Cohenjikan/RhythmDoctorTrainer", Lbl());
+            GUILayout.Label("macOS 分支：https://github.com/MrTangLuyao/RhythmDoctorTrainerMac", Lbl());
             GUILayout.Space(4);
 
             _scroll = GUILayout.BeginScrollView(_scroll);
@@ -305,7 +338,7 @@ namespace RDTrainer
             if (GUILayout.Button("狗狗模式（下次进 Les Mis 关生效）"))
                 Run("DogMode", () => scnGame.loadDogMode = true);
             if (GUILayout.Button("跳到隐藏曲 Song of the Sea（建议在主菜单点）"))
-                Run("SongOfTheSea", () => Traverse.Create(scnBase.instance).Method("GoToLevelWithEnum", Level.SongOfTheSea).GetValue());
+                Run("SongOfTheSea", () => scnBase.GoToLevelWithEnum(Level.SongOfTheSea));
             GUILayout.Label("手动秘籍：主菜单 JJDF=隐藏曲；选关 ←→ 序列=狗狗模式。", Lbl());
         }
 
@@ -372,14 +405,13 @@ namespace RDTrainer
         }
 
         // Force-write rank -1 (= unlocked / NotPassed) for every level, bypassing the
-        // IsBetterRank gate, then mark game done and flush to disk. (The native
-        // UnlockAllLevels uses force=false; this version is bulletproof on fresh saves.)
+        // IsBetterRank gate, then mark game done and flush to disk.
         private static void UnlockAllLevelsForce()
         {
             foreach (Level lv in Enum.GetValues(typeof(Level)))
             {
                 if (lv == Level.None) continue;
-                try { Persistence.SetLevelRank(lv, (Rank)(-1), force: true); } catch { }
+                try { Persistence.SetLevelRank(lv, (Rank)(-1), true, true); } catch { }
             }
             try { Persistence.SetIsGameDone(true); } catch { }
             try { Persistence.SaveAll(); } catch { }
@@ -391,7 +423,7 @@ namespace RDTrainer
             foreach (Level lv in Enum.GetValues(typeof(Level)))
             {
                 if (lv == Level.None) continue;
-                try { Persistence.SetLevelRank(lv, s, force: true); } catch { }
+                try { Persistence.SetLevelRank(lv, s, true, true); } catch { }
             }
             try { Persistence.SaveAll(); } catch { }
         }
@@ -405,8 +437,8 @@ namespace RDTrainer
         // ---------------- helpers ----------------
         private static void Run(string what, Action act)
         {
-            try { act(); Log.LogInfo("Trainer action OK: " + what); }
-            catch (Exception e) { Log.LogError("Trainer action FAILED (" + what + "): " + e); }
+            try { act(); Log.Info("Trainer action OK: " + what); }
+            catch (Exception e) { Log.Error("Trainer action FAILED (" + what + "): " + e); }
         }
 
         private static void Indent(Action body)

@@ -4,7 +4,7 @@ using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 
-namespace RDTrainer
+namespace RDTrainerMac
 {
     // Shared runtime state, read by Update(), OnGUI() and the Harmony patches below.
     internal static class Cheats

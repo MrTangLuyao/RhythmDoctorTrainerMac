@@ -1,5 +1,9 @@
 # About · 关于
 
+> **macOS 分支 (this fork):** 不使用 BepInEx —— 改用 Mono.Cecil 把加载器**静态织入**游戏自身的 `Assembly-CSharp.dll`，原生运行（Apple Silicon 直接可用，无需 Rosetta）；菜单热键为 **F3**。下文中「BepInEx 插件 / `Insert`」是上游 Windows 版的描述，原理（调用游戏自身的标志与函数）在两个分支一致。
+>
+> *This macOS fork uses static IL injection (Mono.Cecil) instead of BepInEx; menu key is **F3**. The "BepInEx plugin / `Insert`" wording below describes the upstream Windows version — the underlying approach (calling the game's own flags/methods) is identical.*
+
 ## 这是什么 What
 
 **节奏医生修改器 (Rhythm Doctor Trainer)** 是一个为单机节奏游戏《Rhythm Doctor》制作的游戏内修改器（trainer）。它以一个 BepInEx 插件的形式运行，在游戏里叠加一个图形菜单（按 `Insert` 呼出），把游戏里原本隐藏的能力暴露成可一键开关的选项。
