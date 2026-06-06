@@ -10,37 +10,41 @@ Autoplay（全程满分自动演奏）、游戏变速、关卡直达、一键解
 > 注意：**仅供单机自娱与录制使用**。不修改任何在线/对战逻辑，请勿用于排行榜。与 7th Beat Games 无任何关联。
 > 本工具**完全免费开源，严禁倒卖**；内置完整性校验，删除或篡改水印会让修改器直接失效。
 
-## 一键安装 / 卸载
+## 一键安装 / 卸载（懒人版）
 
-| | |
-|---|---|
-| 安装 | [`./install.sh`](install.sh) |
-| 卸载 / 还原原版 | [`./uninstall.sh`](uninstall.sh) |
+打开「**终端**」(Terminal)，把下面一行粘贴进去回车即可。脚本会自动：装 .NET SDK（若无）→ 拉取源码 → 编译 → 备份游戏文件 → 织入加载器。**安装前请先退出游戏。**
 
+**安装 / 更新**
 ```bash
-# 0) 一次性：装 .NET SDK（若没有）
-curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 --install-dir "$HOME/.dotnet"
-
-# 1) 取得本仓库
-git clone https://github.com/MrTangLuyao/RhythmDoctorTrainerMac.git
-cd RhythmDoctorTrainerMac
-
-# 2) 安装（自动：编译 → 备份 → 织入）。装好后正常用 Steam 启动，进关卡按 F3。
-./install.sh
-
-# 卸载还原：
-./uninstall.sh
+curl -fsSL https://raw.githubusercontent.com/MrTangLuyao/RhythmDoctorTrainerMac/refs/heads/main/install.sh | bash
 ```
 
-- 自定义游戏路径：`MANAGED="/path/to/Rhythm Doctor.app/Contents/Resources/Data/Managed" ./install.sh`
-- 安装脚本**幂等**：游戏更新或 Steam「验证文件完整性」会还原游戏 DLL、补丁随之失效 —— 再跑一次 `./install.sh` 即可（几秒钟）。
+**卸载 / 还原原版**
+```bash
+curl -fsSL https://raw.githubusercontent.com/MrTangLuyao/RhythmDoctorTrainerMac/refs/heads/main/uninstall.sh | bash
+```
+
+装好后**正常用 Steam 启动游戏**，进任意画面按 **F3** 开/关菜单。
+
+- 自定义游戏路径：`curl -fsSL .../install.sh | MANAGED="/path/.../Data/Managed" bash`
+- **幂等**：游戏更新或 Steam「验证文件完整性」会还原游戏 DLL、补丁随之失效 —— 重跑安装命令即可（几秒钟）。
+
+<details><summary>从源码手动安装 / 卸载</summary>
+
+```bash
+git clone https://github.com/MrTangLuyao/RhythmDoctorTrainerMac.git
+cd RhythmDoctorTrainerMac
+./install.sh      # 安装（自动装 .NET SDK → 编译 → 织入）
+./uninstall.sh    # 卸载，还原原版
+```
+</details>
 
 ### 验证是否加载
 ```bash
 grep RDTrainerMac "$HOME/Library/Logs/7th Beat Games/Rhythm Doctor/Player.log"
 # 期望：  ... v2.20m loaded · ... · Menu key = F3 · patches ok=4 fail=0
 ```
-在**主菜单**左上角也会常驻显示「✓ 修改器已激活 · 按下 F3 显示/关闭修改器菜单」。
+非关卡画面（标题 / 医院 / 选关…）左上角会显示一个小窗口「✓ 游戏已修改 · 按 F3 打开/关闭 修改器菜单」；打开菜单或进入关卡时自动隐藏。
 
 ## 功能
 
