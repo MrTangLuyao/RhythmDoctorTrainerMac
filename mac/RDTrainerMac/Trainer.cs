@@ -1,5 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using System.Reflection;
+using System.Text;
 using HarmonyLib;
 using UnityEngine;
 
@@ -13,7 +17,7 @@ namespace RDTrainerMac
     {
         public const string Guid = "com.cohen.rdtrainer";
         public const string Name = "RD Trainer (节奏医生修改器)";
-        public const string Version = "2.20-macf3";
+        public const string Version = "2.40-mf";
 
         // 防倒卖水印：此串同时用于「显示」与「启动完整性校验」。改动或删除它会导致 SHA256 校验失败、
         // 整个修改器拒绝工作（不挂补丁、不应用任何功能）。谁删水印谁失效。
@@ -29,6 +33,7 @@ namespace RDTrainerMac
         private int _legacyTab;    // legacy UI: 0 普通, 1 开发者, 2 高级, 3 关卡直达
         private Rect _win = new Rect(24, 24, 480, 620);
         private Rect _hintWin = new Rect(20, 20, 300, 70);
+        private Rect _keysWin = new Rect(20, 120, 280, 84);
         private Vector2 _scroll;
         private string _lvFilter = "";
         private Font _cjk;
@@ -38,11 +43,29 @@ namespace RDTrainerMac
         private bool _wipeConfirm;
         private bool _showMisc;
         private bool _calLoaded;
-        private int _bestRound = 1;       // legacy 高级 tab
+        private int _bestRound = 1;        // legacy 高级 tab
         private bool _saveLoaded;
         private string _wlRoundText = "0"; // 举重 best infinite round (keyboard input)
         private string _beansText = "0";   // 武士豆子跳 (Beans Hopper 2-B1) high score
+        private string _stackerText = "0"; // Ian 桌面·叠方块 high score
+        private string _tempresText = "0"; // Ian 桌面·Tempres high score (float)
         private bool _paigeStays;          // 佩奇结局分支 (Persistence.GetPaigeEnding)
+        private string _completion;        // 完成度 summary line
+        private string _slotDelText = "1";
+
+        // key overlay
+        private struct KeyHit { public string name; public float t; public KeyHit(string n, float tt) { name = n; t = tt; } }
+        private readonly List<KeyHit> _recent = new List<KeyHit>();
+        private static readonly KeyCode[] OverlayKeys =
+        {
+            KeyCode.Space, KeyCode.Return, KeyCode.UpArrow, KeyCode.DownArrow, KeyCode.LeftArrow, KeyCode.RightArrow,
+            KeyCode.A, KeyCode.S, KeyCode.D, KeyCode.F, KeyCode.G, KeyCode.H, KeyCode.J, KeyCode.K, KeyCode.L,
+            KeyCode.Q, KeyCode.W, KeyCode.E, KeyCode.R, KeyCode.T, KeyCode.Y, KeyCode.U, KeyCode.I, KeyCode.O, KeyCode.P,
+            KeyCode.Z, KeyCode.X, KeyCode.C, KeyCode.V, KeyCode.B, KeyCode.N, KeyCode.M,
+            KeyCode.LeftShift, KeyCode.RightShift
+        };
+
+        private float _lastAutoRestart;
 
         private void Awake()
         {
@@ -73,8 +96,8 @@ namespace RDTrainerMac
         {
             using (var sha = System.Security.Cryptography.SHA256.Create())
             {
-                byte[] h = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(s));
-                var sb = new System.Text.StringBuilder(h.Length * 2);
+                byte[] h = sha.ComputeHash(Encoding.UTF8.GetBytes(s));
+                var sb = new StringBuilder(h.Length * 2);
                 foreach (byte b in h) sb.Append(b.ToString("x2"));
                 return sb.ToString();
             }
@@ -91,9 +114,58 @@ namespace RDTrainerMac
                     if (_menuOpen) _legacy = false; // reopening always returns to the new UI
                 }
                 if (_menuOpen) { Cursor.visible = true; Cursor.lockState = CursorLockMode.None; }
+
+                if (Input.GetKeyDown(KeyCode.F4))
+                    Run("WinLevel(F4)", () => { var g = scnGame.instance; if (g != null) g.WinLevel(); });
+                if (Input.GetKeyDown(KeyCode.F5))
+                    Run("Restart(F5)", () => { var g = scnGame.instance; if (g != null) g.Restart(false); });
+
+                if (Cheats.autoRestartOnMiss) AutoRestartTick();
+                if (Cheats.keyOverlay) CaptureKeys();
+
                 ApplyState();
             }
             catch (Exception e) { Log.Error("Update: " + e); }
+        }
+
+        private void AutoRestartTick()
+        {
+            try
+            {
+                var g = scnGame.instance;
+                if (g == null || g.currentLevel == null) return;
+                if (g.currentLevel.numMistakes <= 0f) return;
+                if (Time.unscaledTime - _lastAutoRestart < 1.5f) return;
+                _lastAutoRestart = Time.unscaledTime;
+                g.Restart(false);
+                Log.Info("auto-restart: mistake detected");
+            }
+            catch { }
+        }
+
+        private void CaptureKeys()
+        {
+            float now = Time.unscaledTime;
+            foreach (var k in OverlayKeys)
+                if (Input.GetKeyDown(k)) _recent.Add(new KeyHit(KeyName(k), now));
+            _recent.RemoveAll(h => now - h.t > 4f);
+            while (_recent.Count > 10) _recent.RemoveAt(0);
+        }
+
+        private static string KeyName(KeyCode k)
+        {
+            switch (k)
+            {
+                case KeyCode.Space: return "空格";
+                case KeyCode.Return: return "回车";
+                case KeyCode.UpArrow: return "↑";
+                case KeyCode.DownArrow: return "↓";
+                case KeyCode.LeftArrow: return "←";
+                case KeyCode.RightArrow: return "→";
+                case KeyCode.LeftShift: return "L⇧";
+                case KeyCode.RightShift: return "R⇧";
+                default: return k.ToString();
+            }
         }
 
         private void ApplyState()
@@ -110,6 +182,7 @@ namespace RDTrainerMac
             // Speed: the engine applies it at level Start via `RDTime.speed = scnGame.levelSpeed`,
             // which then scales bpm AND the song's pitch consistently. So we arm the static
             // `scnGame.levelSpeed`; it takes effect on the next level start / restart.
+            // (立即变速 button additionally pushes RDTime.speed + conductor pitch mid-level.)
             try
             {
                 if (Cheats.speedOverride)
@@ -119,6 +192,7 @@ namespace RDTrainerMac
                 else if (_lastSpeedOverride)
                 {
                     scnGame.levelSpeed = 1f;
+                    ApplyLiveSpeed(1f); // also undo any mid-level override
                 }
             }
             catch { }
@@ -135,6 +209,21 @@ namespace RDTrainerMac
             if (ds.GiveAchievements != wantAch) ds.GiveAchievements = wantAch;
 
             try { if (RDString.samuraiMode != Cheats.samuraiMode) RDString.samuraiMode = Cheats.samuraiMode; } catch { }
+        }
+
+        // Mid-level speed: RDTime.speed drives the conductor's timing math each frame; the song's
+        // audible pitch is whatever AudioSource.pitch was set at Play, so push both together.
+        private static void ApplyLiveSpeed(float v)
+        {
+            try { RDTime.speed = v; } catch { }
+            try
+            {
+                var fi = typeof(scrConductor).GetField("_instance",
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                var cond = fi != null ? fi.GetValue(null) as scrConductor : null;
+                if (cond != null) cond.pitch = v;
+            }
+            catch (Exception e) { Log.Error("ApplyLiveSpeed: " + e.Message); }
         }
 
         private void EnsureFont()
@@ -169,6 +258,9 @@ namespace RDTrainerMac
             if (InNonLevelScene() && !_menuOpen)
                 GUILayout.Window(740182, _hintWin, DrawHintWindow, "节奏医生修改器");
 
+            if (Cheats.keyOverlay)
+                _keysWin = GUILayout.Window(740183, _keysWin, DrawKeysWindow, "按键显示");
+
             if (_menuOpen)
                 _win = GUILayout.Window(740181, _win, DrawWindow, $"节奏医生修改器 v{Version}");
             GUI.skin.font = prev;
@@ -182,8 +274,21 @@ namespace RDTrainerMac
 
         private void DrawHintWindow(int id)
         {
-            GUILayout.Label("✓ 游戏已修改");
-            GUILayout.Label($"按 {MenuKey} 打开 / 关闭 修改器菜单");
+            GUILayout.Label("-- 全局快捷键 --");
+            GUILayout.Label("F3 开启/关闭 修改器菜单");
+            GUILayout.Label("-- 关卡内 --");
+            GUILayout.Label("F4 一键通关");
+            GUILayout.Label("F5 快速重开");
+        }
+
+        private void DrawKeysWindow(int id)
+        {
+            var held = new List<string>();
+            foreach (var k in OverlayKeys)
+                if (Input.GetKey(k)) held.Add(KeyName(k));
+            GUILayout.Label(held.Count > 0 ? string.Join(" + ", held) : "—", Big());
+            GUILayout.Label(_recent.Count > 0 ? string.Join("  ", _recent.Select(h => h.name)) : " ", Lbl());
+            GUI.DragWindow(new Rect(0, 0, 10000, 10000));
         }
 
         private void DrawWindow(int id)
@@ -241,17 +346,21 @@ namespace RDTrainerMac
                     Cheats.speed = GUILayout.HorizontalSlider(Cheats.speed, 0.1f, 3.0f);
                     if (GUILayout.Button("1x", GUILayout.Width(36))) Cheats.speed = 1f;
                     GUILayout.EndHorizontal();
+                    if (GUILayout.Button("立即变速（实验：本关直接生效，不重开）"))
+                        Run("LiveSpeed", () => ApplyLiveSpeed(Cheats.speed));
                 });
 
             Cheats.autoplay = GUILayout.Toggle(Cheats.autoplay, " Autoplay 自动演奏");
             if (Cheats.autoplay)
                 Indent(() => Cheats.forceFlawless = GUILayout.Toggle(Cheats.forceFlawless, " 保留完美计算"));
 
+            Cheats.autoRestartOnMiss = GUILayout.Toggle(Cheats.autoRestartOnMiss, " 失误(miss)自动重开");
             Cheats.instantDialogue = GUILayout.Toggle(Cheats.instantDialogue, " 瞬间对白");
             Cheats.devMode = GUILayout.Toggle(Cheats.devMode, " 开发者总开关");
             Cheats.debugMode = GUILayout.Toggle(Cheats.debugMode, " 调试模式（Debug Mode）");
             Cheats.samuraiMode = GUILayout.Toggle(Cheats.samuraiMode, " 武士模式");
             try { RDC.booth = GUILayout.Toggle(RDC.booth, " 展会模式（谨慎！会破坏存档）"); } catch { }
+            Cheats.keyOverlay = GUILayout.Toggle(Cheats.keyOverlay, " 按键显示（录制用悬浮窗）");
 
             GUILayout.Space(6);
             _showMisc = GUILayout.Toggle(_showMisc, _showMisc ? "▼ 杂项调试标志" : "▶ 杂项调试标志", "Button");
@@ -274,15 +383,48 @@ namespace RDTrainerMac
         private void DrawSave()
         {
             GUILayout.Label("⚠ 存档修改无法撤回 谨慎修改", Warn());
+
+            // 目标槽位 = 游戏的 currentSlotIndex；所有 Persistence 写入都落到这个槽。
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("目标槽位:", GUILayout.Width(70));
+            int cur = 0; try { cur = Persistence.currentSlotIndex; } catch { }
+            for (int s = 0; s < 3; s++)
+            {
+                bool on = cur == s;
+                if (GUILayout.Toggle(on, $" 槽 {s + 1} ", "Button") && !on)
+                {
+                    int target = s;
+                    Run("SelectSlot " + (s + 1), () => { Persistence.currentSlotIndex = target; InvalidateCaches(); });
+                }
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.Label("默认为游戏当前使用的存档；切换后本页所有修改写入所选槽位", Lbl());
             GUILayout.Space(4);
+
             if (!_saveLoaded) LoadSaveFields();
+            if (_completion != null)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(_completion, Lbl());
+                if (GUILayout.Button("刷新", GUILayout.Width(56))) InvalidateCaches();
+                GUILayout.EndHorizontal();
+            }
+            GUILayout.Space(4);
 
             if (GUILayout.Button("标记通关"))
-                Run("SetIsGameDone", () => { Persistence.SetIsGameDone(true); Persistence.SaveAll(); });
-            if (GUILayout.Button("存档全 S+"))
-                Run("AllLevelsToSPlus", SetAllLevelsToSPlus);
+                Run("SetIsGameDone", () => { Persistence.SetIsGameDone(true); Persistence.SaveAll(); InvalidateCaches(); });
+            if (GUILayout.Button("存档全 S+（含小游戏纪录 99999）"))
+                Run("AllLevelsToSPlus", () =>
+                {
+                    SetAllLevelsTo(Rank.FromString("S+"));
+                    Persistence.SetRhythmWeightlifterBestInfiniteRound(99999);
+                    Persistence.SetLevelScore(BeansLevel, 99999, true);
+                    Persistence.SetRhythmStackerScore(99999);
+                    Persistence.SaveAll();
+                    InvalidateCaches();
+                });
             if (GUILayout.Button("一键推进剧情"))
-            { Run("RevealStory", RevealAllStory); _paigeStays = true; }
+            { Run("RevealStory", RevealAllStory); _paigeStays = true; InvalidateCaches(); }
             if (GUILayout.Button("解锁全部成就（写入 Steam）"))
                 Run("UnlockAllAchievements", UnlockAllAchievements);
 
@@ -294,41 +436,39 @@ namespace RDTrainerMac
             }
 
             GUILayout.Space(8);
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("举重最佳轮数", GUILayout.Width(110));
-            _wlRoundText = GUILayout.TextField(_wlRoundText ?? "", GUILayout.Width(70));
-            if (GUILayout.Button("读取", GUILayout.Width(56)))
-                Run("GetBestRound", () => _wlRoundText = Persistence.GetBestInfiniteRound().ToString());
-            if (GUILayout.Button("写入", GUILayout.Width(56)))
-                Run("SetBestRound", () =>
-                {
-                    int n = ParseCount(_wlRoundText);
-                    Persistence.SetRhythmWeightlifterBestInfiniteRound(n);
-                    Persistence.SaveAll();
-                });
-            GUILayout.EndHorizontal();
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("豆子跳最高分", GUILayout.Width(110));
-            _beansText = GUILayout.TextField(_beansText ?? "", GUILayout.Width(70));
-            if (GUILayout.Button("读取", GUILayout.Width(56)))
-                Run("GetBeansScore", () => _beansText = Persistence.GetLevelScore(BeansLevel).ToString());
-            if (GUILayout.Button("写入", GUILayout.Width(56)))
-                Run("SetBeansScore", () =>
-                {
-                    int n = ParseCount(_beansText);
-                    Persistence.SetLevelScore(BeansLevel, n, true);
-                    Persistence.SaveAll();
-                });
-            GUILayout.EndHorizontal();
-            GUILayout.Label("武士豆子跳 = 奖励关 2-B1 Beans Hopper，最高分显示在传呼机上", Lbl());
+            NumRow("举重最佳轮数", ref _wlRoundText,
+                t => { Persistence.SetRhythmWeightlifterBestInfiniteRound(ParseCount(t)); });
+            NumRow("豆子跳最高分", ref _beansText,
+                t => { Persistence.SetLevelScore(BeansLevel, ParseCount(t), true); });
+            NumRow("叠方块最高分", ref _stackerText,
+                t => { Persistence.SetRhythmStackerScore(ParseCount(t)); });
+            NumRow("Tempres 纪录", ref _tempresText,
+                t => { Persistence.SetTempresScore(ParseFloatVal(t)); });
 
             GUILayout.Space(8);
-            _wipeConfirm = GUILayout.Toggle(_wipeConfirm, " 我确认要删除全部存档");
+            _wipeConfirm = GUILayout.Toggle(_wipeConfirm, " 我确认删除操作不可恢复");
             GUI.enabled = _wipeConfirm;
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("删除槽位 (1-3)", GUILayout.Width(110));
+            _slotDelText = GUILayout.TextField(_slotDelText ?? "", GUILayout.Width(30));
+            if (GUILayout.Button("删除该槽", GUILayout.Width(90)))
+            { Run("DeleteSlot", () => { Persistence.DeleteSlotData(ParseSlot(_slotDelText)); Persistence.SaveAll(); InvalidateCaches(); }); _wipeConfirm = false; }
+            GUILayout.EndHorizontal();
             if (GUILayout.Button("🗑 删除全部存档（不可恢复）"))
-            { Run("DeleteSavedData", () => Persistence.DeleteSavedData()); _wipeConfirm = false; }
+            { Run("DeleteSavedData", () => { Persistence.DeleteSavedData(); InvalidateCaches(); }); _wipeConfirm = false; }
             GUI.enabled = true;
+        }
+
+        // label + text field + 写入 button, shared layout for the record editors
+        private void NumRow(string label, ref string text, Action<string> write)
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(label, GUILayout.Width(110));
+            text = GUILayout.TextField(text ?? "", GUILayout.Width(70));
+            string captured = text;
+            if (GUILayout.Button("写入", GUILayout.Width(56)))
+                Run("Write " + label, () => { write(captured); Persistence.SaveAll(); });
+            GUILayout.EndHorizontal();
         }
 
         private static string BeansLevel => Level.BeansHopper.ToString();
@@ -341,12 +481,44 @@ namespace RDTrainerMac
             return n;
         }
 
+        private static float ParseFloatVal(string text)
+        {
+            float f;
+            if (!float.TryParse((text ?? "").Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out f) || f < 0f)
+                throw new Exception("请输入非负数字");
+            return f;
+        }
+
+        // slots are shown 1-based in the UI, stored 0-based
+        private static int ParseSlot(string text)
+        {
+            int n;
+            if (!int.TryParse((text ?? "").Trim(), out n) || n < 1 || n > 3)
+                throw new Exception("槽位必须是 1-3");
+            return n - 1;
+        }
+
+        private void InvalidateCaches()
+        {
+            _saveLoaded = false;
+        }
+
         private void LoadSaveFields()
         {
             _saveLoaded = true;
             try { _wlRoundText = Persistence.GetBestInfiniteRound().ToString(); } catch { _wlRoundText = "0"; }
             try { _beansText = Persistence.GetLevelScore(BeansLevel).ToString(); } catch { _beansText = "0"; }
+            try { _stackerText = Persistence.GetRhythmStackerScore().ToString(); } catch { _stackerText = "0"; }
+            try { _tempresText = Persistence.GetTempresScore().ToString("0.###", CultureInfo.InvariantCulture); } catch { _tempresText = "0"; }
             try { _paigeStays = Persistence.GetPaigeEnding(); } catch { _paigeStays = false; }
+            try
+            {
+                var gc = Persistence.GetGameCompletion();
+                float pct = gc.percentCompletion <= 1.5f ? gc.percentCompletion * 100f : gc.percentCompletion;
+                _completion = string.Format(CultureInfo.InvariantCulture,
+                    "游戏完成度 {0:0.#}% · 已通关 {1:0} · 完美 {2:0}", pct, gc.passedLevels, gc.perfectLevels);
+            }
+            catch { _completion = null; }
         }
 
         // ---------------- 旧版 · 普通玩家 ----------------
@@ -412,7 +584,7 @@ namespace RDTrainerMac
             if (GUILayout.Button("标记游戏通关（SetIsGameDone）"))
                 Run("SetIsGameDone", () => Persistence.SetIsGameDone(true));
             if (GUILayout.Button("全部关卡刷成 S 评级"))
-                Run("AllLevelsToS", SetAllLevelsToS);
+                Run("AllLevelsToS", () => SetAllLevelsTo(Rank.FromString("S")));
             if (GUILayout.Button("一键推进全部剧情（铺满 hub 角色）"))
                 Run("RevealStory", RevealAllStory);
             GUILayout.Label("把所有过场/章节标志设为已播放，让 hub 里角色就位；点完退菜单重进。含 Paige 结局分支。\n（想直接录关卡，更推荐用「关卡直达」标签，无需改剧情）", Lbl());
@@ -493,7 +665,7 @@ namespace RDTrainerMac
             GUILayout.Label("手动秘籍：主菜单 JJDF=隐藏曲；选关 ←→ 序列=狗狗模式。", Lbl());
         }
 
-        // ---------------- 关卡直达 ----------------
+        // ---------------- 关卡直达（保持旧版样式） ----------------
         private void DrawLevels()
         {
             GUILayout.Label("点关卡名直接进入，绕过 hub 的剧情/NPC 限制。配合「普通」页的 Autoplay 即可录制任意关卡。", Lbl());
@@ -568,16 +740,6 @@ namespace RDTrainerMac
             try { Persistence.SaveAll(); } catch { }
         }
 
-        private static void SetAllLevelsToS()
-        {
-            SetAllLevelsTo(Rank.FromString("S"));
-        }
-
-        private static void SetAllLevelsToSPlus()
-        {
-            SetAllLevelsTo(Rank.FromString("S+"));
-        }
-
         private static void SetAllLevelsTo(Rank rank)
         {
             foreach (Level lv in Enum.GetValues(typeof(Level)))
@@ -610,7 +772,7 @@ namespace RDTrainerMac
 
         private static void Section(string title) => GUILayout.Label("── " + title + " ──", Hdr());
 
-        private static GUIStyle _hdr, _lbl, _warn;
+        private static GUIStyle _hdr, _lbl, _warn, _big;
         private static GUIStyle Hdr()
         {
             if (_hdr == null) _hdr = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold };
@@ -629,6 +791,11 @@ namespace RDTrainerMac
                 _warn.normal.textColor = new Color(1f, 0.45f, 0.35f);
             }
             return _warn;
+        }
+        private static GUIStyle Big()
+        {
+            if (_big == null) _big = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, fontSize = 18 };
+            return _big;
         }
     }
 }

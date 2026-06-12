@@ -9,7 +9,7 @@
     <TargetFramework>netstandard2.1</TargetFramework>
     <AssemblyName>RDTrainerMac</AssemblyName>
     <Product>RD Trainer (节奏医生修改器) · macOS</Product>
-    <Version>2.2.0</Version>
+    <Version>2.4.0</Version>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
@@ -31,6 +31,10 @@
     </Reference>
     <Reference Include="Assembly-CSharp-firstpass">
       <HintPath>$(Managed)/Assembly-CSharp-firstpass.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RDTools">
+      <HintPath>$(Managed)/RDTools.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine">

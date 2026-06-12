@@ -24,6 +24,11 @@ namespace RDTrainerMac
         public static bool noAchievements = false;  // DebugSettings.GiveAchievements = !this
         public static bool samuraiMode = false;     // RDString.samuraiMode
 
+        // ---- practice / overlay (v2.40-mf) ----
+        public static bool autoRestartOnMiss = false; // restart level as soon as numMistakes > 0
+        public static bool keyOverlay = false;        // on-screen pressed-keys window
+        // hotkeys F4 (win level) / F5 (quick restart) are always on, no toggle
+
         // ---- advanced (calibration, edited then applied) ----
         public static float calV, calI, calIP2, calLat;
     }
