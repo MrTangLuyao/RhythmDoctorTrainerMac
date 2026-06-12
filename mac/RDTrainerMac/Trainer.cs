@@ -5,14 +5,15 @@ using UnityEngine;
 
 namespace RDTrainerMac
 {
-    // In-game trainer for Rhythm Doctor (单机), macOS-native. Insert opens an overlay with four
-    // tabs: 普通玩家 (recording / QoL), 开发者 (dev unlocks), 高级 (experimental), 关卡直达 (level jump).
+    // In-game trainer for Rhythm Doctor (单机), macOS-native. F3 opens an overlay with three
+    // tabs: 普通 (gameplay toggles), 存档修改 (irreversible save edits), 关卡直达 (level jump),
+    // plus a 旧版菜单 button that swaps in the legacy 4-tab UI until the menu is reopened.
     // This is the BepInEx BaseUnityPlugin ported to a plain MonoBehaviour hosted by Loader.
     public class Trainer : MonoBehaviour
     {
         public const string Guid = "com.cohen.rdtrainer";
         public const string Name = "RD Trainer (节奏医生修改器)";
-        public const string Version = "2.20m";
+        public const string Version = "2.20-macf3";
 
         // 防倒卖水印：此串同时用于「显示」与「启动完整性校验」。改动或删除它会导致 SHA256 校验失败、
         // 整个修改器拒绝工作（不挂补丁、不应用任何功能）。谁删水印谁失效。
@@ -23,7 +24,9 @@ namespace RDTrainerMac
         private static readonly KeyCode MenuKey = KeyCode.F3;
 
         private bool _menuOpen;
-        private int _tab;
+        private int _tab;          // new UI: 0 普通, 1 存档修改, 2 关卡直达
+        private bool _legacy;      // 旧版菜单 mode; resets to the new UI when the menu is reopened
+        private int _legacyTab;    // legacy UI: 0 普通, 1 开发者, 2 高级, 3 关卡直达
         private Rect _win = new Rect(24, 24, 480, 620);
         private Rect _hintWin = new Rect(20, 20, 300, 70);
         private Vector2 _scroll;
@@ -35,7 +38,11 @@ namespace RDTrainerMac
         private bool _wipeConfirm;
         private bool _showMisc;
         private bool _calLoaded;
-        private int _bestRound = 1;
+        private int _bestRound = 1;       // legacy 高级 tab
+        private bool _saveLoaded;
+        private string _wlRoundText = "0"; // 举重 best infinite round (keyboard input)
+        private string _beansText = "0";   // 武士豆子跳 (Beans Hopper 2-B1) high score
+        private bool _paigeStays;          // 佩奇结局分支 (Persistence.GetPaigeEnding)
 
         private void Awake()
         {
@@ -78,7 +85,11 @@ namespace RDTrainerMac
             if (!IntegrityOK) return;
             try
             {
-                if (Input.GetKeyDown(MenuKey)) _menuOpen = !_menuOpen;
+                if (Input.GetKeyDown(MenuKey))
+                {
+                    _menuOpen = !_menuOpen;
+                    if (_menuOpen) _legacy = false; // reopening always returns to the new UI
+                }
                 if (_menuOpen) { Cursor.visible = true; Cursor.lockState = CursorLockMode.None; }
                 ApplyState();
             }
@@ -178,26 +189,170 @@ namespace RDTrainerMac
         private void DrawWindow(int id)
         {
             GUILayout.BeginHorizontal();
-            if (GUILayout.Toggle(_tab == 0, " 普通 ", "Button")) _tab = 0;
-            if (GUILayout.Toggle(_tab == 1, " 开发者 ", "Button")) _tab = 1;
-            if (GUILayout.Toggle(_tab == 2, " 高级 ", "Button")) _tab = 2;
-            if (GUILayout.Toggle(_tab == 3, " 关卡直达 ", "Button")) _tab = 3;
+            if (_legacy)
+            {
+                if (GUILayout.Toggle(_legacyTab == 0, " 普通 ", "Button")) _legacyTab = 0;
+                if (GUILayout.Toggle(_legacyTab == 1, " 开发者 ", "Button")) _legacyTab = 1;
+                if (GUILayout.Toggle(_legacyTab == 2, " 高级 ", "Button")) _legacyTab = 2;
+                if (GUILayout.Toggle(_legacyTab == 3, " 关卡直达 ", "Button")) _legacyTab = 3;
+            }
+            else
+            {
+                if (GUILayout.Toggle(_tab == 0, " 普通 ", "Button")) _tab = 0;
+                if (GUILayout.Toggle(_tab == 1, " 存档修改 ", "Button")) _tab = 1;
+                if (GUILayout.Toggle(_tab == 2, " 关卡直达 ", "Button")) _tab = 2;
+            }
             GUILayout.EndHorizontal();
-            GUILayout.Label("免费开源 · 严禁倒卖 · github.com/Cohenjikan/RhythmDoctorTrainer", Lbl());
+            GUILayout.Label("免费开源 严禁倒卖 · github.com/Cohenjikan/RhythmDoctorTrainer", Lbl());
             GUILayout.Label("macOS 分支：https://github.com/MrTangLuyao/RhythmDoctorTrainerMac", Lbl());
             GUILayout.Space(4);
 
             _scroll = GUILayout.BeginScrollView(_scroll);
-            switch (_tab) { case 1: DrawDev(); break; case 2: DrawAdvanced(); break; case 3: DrawLevels(); break; default: DrawNormal(); break; }
+            if (_legacy)
+                switch (_legacyTab) { case 1: DrawLegacyDev(); break; case 2: DrawLegacyAdvanced(); break; case 3: DrawLevels(); break; default: DrawLegacyNormal(); break; }
+            else
+                switch (_tab) { case 1: DrawSave(); break; case 2: DrawLevels(); break; default: DrawNormal(); break; }
             GUILayout.EndScrollView();
 
             bool inGame = false; try { inGame = scnGame.instance != null; } catch { }
             GUILayout.Label(inGame ? "● 当前在关卡内" : "○ 当前在菜单/编辑器", Lbl());
+            if (_legacy)
+            {
+                if (GUILayout.Button("新版菜单")) _legacy = false;
+            }
+            else if (GUILayout.Button("旧版菜单")) { _legacy = true; _legacyTab = 0; }
             GUI.DragWindow(new Rect(0, 0, 10000, 24));
         }
 
-        // ---------------- 普通玩家 ----------------
+        // ---------------- 普通（新版） ----------------
         private void DrawNormal()
+        {
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("秒通本关")) Run("WinLevel", () => { var g = scnGame.instance; if (g != null) g.WinLevel(); });
+            if (GUILayout.Button("跳过本关")) Run("SkipLevel", () => { var g = scnGame.instance; if (g != null) g.SkipLevel(); });
+            if (GUILayout.Button("快速重开")) Run("Restart", () => { var g = scnGame.instance; if (g != null) g.Restart(false); });
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(6);
+            Cheats.speedOverride = GUILayout.Toggle(Cheats.speedOverride, $" 变速 {Cheats.speed:0.00}x（重开本关生效）");
+            if (Cheats.speedOverride)
+                Indent(() =>
+                {
+                    GUILayout.BeginHorizontal();
+                    Cheats.speed = GUILayout.HorizontalSlider(Cheats.speed, 0.1f, 3.0f);
+                    if (GUILayout.Button("1x", GUILayout.Width(36))) Cheats.speed = 1f;
+                    GUILayout.EndHorizontal();
+                });
+
+            Cheats.autoplay = GUILayout.Toggle(Cheats.autoplay, " Autoplay 自动演奏");
+            if (Cheats.autoplay)
+                Indent(() => Cheats.forceFlawless = GUILayout.Toggle(Cheats.forceFlawless, " 保留完美计算"));
+
+            Cheats.noFail = GUILayout.Toggle(Cheats.noFail, " 无敌");
+            Cheats.instantDialogue = GUILayout.Toggle(Cheats.instantDialogue, " 瞬间对白");
+            Cheats.devMode = GUILayout.Toggle(Cheats.devMode, " 开发者总开关");
+            Cheats.debugMode = GUILayout.Toggle(Cheats.debugMode, " 调试模式（Debug Mode）");
+            Cheats.samuraiMode = GUILayout.Toggle(Cheats.samuraiMode, " 武士模式");
+            try { RDC.booth = GUILayout.Toggle(RDC.booth, " 展会模式（谨慎！会破坏存档）"); } catch { }
+
+            GUILayout.Space(6);
+            _showMisc = GUILayout.Toggle(_showMisc, _showMisc ? "▼ 杂项调试标志" : "▶ 杂项调试标志", "Button");
+            if (_showMisc)
+            {
+                var ds = DebugSettings.instance;
+                Indent(() =>
+                {
+                    ds.NoPro = GUILayout.Toggle(ds.NoPro, " NoPro");
+                    ds.ForceNoSteamworks = GUILayout.Toggle(ds.ForceNoSteamworks, " ForceNoSteamworks");
+                    ds.EmulateMobile = GUILayout.Toggle(ds.EmulateMobile, " EmulateMobile（模拟手机端）");
+                    ds.RunningOnSteamDeck = GUILayout.Toggle(ds.RunningOnSteamDeck, " RunningOnSteamDeck");
+                    ds.DebugAmbience = GUILayout.Toggle(ds.DebugAmbience, " DebugAmbience");
+                    ds.PauseOnFocusLost = GUILayout.Toggle(ds.PauseOnFocusLost, " PauseOnFocusLost（失焦暂停）");
+                });
+            }
+        }
+
+        // ---------------- 存档修改（新版） ----------------
+        private void DrawSave()
+        {
+            GUILayout.Label("⚠ 存档修改无法撤回 谨慎修改", Warn());
+            GUILayout.Space(4);
+            if (!_saveLoaded) LoadSaveFields();
+
+            if (GUILayout.Button("标记通关"))
+                Run("SetIsGameDone", () => { Persistence.SetIsGameDone(true); Persistence.SaveAll(); });
+            if (GUILayout.Button("存档全 S+"))
+                Run("AllLevelsToSPlus", SetAllLevelsToSPlus);
+            if (GUILayout.Button("一键推进剧情"))
+            { Run("RevealStory", RevealAllStory); _paigeStays = true; }
+            if (GUILayout.Button("解锁全部成就（写入 Steam）"))
+                Run("UnlockAllAchievements", UnlockAllAchievements);
+
+            bool paige = GUILayout.Toggle(_paigeStays, " 佩奇留下（结局分支，含剧透，改动立即写入存档）");
+            if (paige != _paigeStays)
+            {
+                _paigeStays = paige;
+                Run("SetPaigeEnding", () => { Persistence.SetPaigeEnding(paige); Persistence.SaveAll(); });
+            }
+
+            GUILayout.Space(8);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("举重最佳轮数", GUILayout.Width(110));
+            _wlRoundText = GUILayout.TextField(_wlRoundText ?? "", GUILayout.Width(70));
+            if (GUILayout.Button("读取", GUILayout.Width(56)))
+                Run("GetBestRound", () => _wlRoundText = Persistence.GetBestInfiniteRound().ToString());
+            if (GUILayout.Button("写入", GUILayout.Width(56)))
+                Run("SetBestRound", () =>
+                {
+                    int n = ParseCount(_wlRoundText);
+                    Persistence.SetRhythmWeightlifterBestInfiniteRound(n);
+                    Persistence.SaveAll();
+                });
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("豆子跳最高分", GUILayout.Width(110));
+            _beansText = GUILayout.TextField(_beansText ?? "", GUILayout.Width(70));
+            if (GUILayout.Button("读取", GUILayout.Width(56)))
+                Run("GetBeansScore", () => _beansText = Persistence.GetLevelScore(BeansLevel).ToString());
+            if (GUILayout.Button("写入", GUILayout.Width(56)))
+                Run("SetBeansScore", () =>
+                {
+                    int n = ParseCount(_beansText);
+                    Persistence.SetLevelScore(BeansLevel, n, true);
+                    Persistence.SaveAll();
+                });
+            GUILayout.EndHorizontal();
+            GUILayout.Label("武士豆子跳 = 奖励关 2-B1 Beans Hopper，最高分显示在传呼机上", Lbl());
+
+            GUILayout.Space(8);
+            _wipeConfirm = GUILayout.Toggle(_wipeConfirm, " 我确认要删除全部存档");
+            GUI.enabled = _wipeConfirm;
+            if (GUILayout.Button("🗑 删除全部存档（不可恢复）"))
+            { Run("DeleteSavedData", () => Persistence.DeleteSavedData()); _wipeConfirm = false; }
+            GUI.enabled = true;
+        }
+
+        private static string BeansLevel => Level.BeansHopper.ToString();
+
+        private static int ParseCount(string text)
+        {
+            int n;
+            if (!int.TryParse((text ?? "").Trim(), out n) || n < 0)
+                throw new Exception("请输入 0 或正整数");
+            return n;
+        }
+
+        private void LoadSaveFields()
+        {
+            _saveLoaded = true;
+            try { _wlRoundText = Persistence.GetBestInfiniteRound().ToString(); } catch { _wlRoundText = "0"; }
+            try { _beansText = Persistence.GetLevelScore(BeansLevel).ToString(); } catch { _beansText = "0"; }
+            try { _paigeStays = Persistence.GetPaigeEnding(); } catch { _paigeStays = false; }
+        }
+
+        // ---------------- 旧版 · 普通玩家 ----------------
+        private void DrawLegacyNormal()
         {
             Section("录制 / 演示");
             Cheats.autoplay = GUILayout.Toggle(Cheats.autoplay, " Autoplay — 全程满分自动演奏（进关卡生效）");
@@ -245,8 +400,8 @@ namespace RDTrainerMac
             Cheats.samuraiMode = GUILayout.Toggle(Cheats.samuraiMode, " 武士文本模式（SAMURAI.）");
         }
 
-        // ---------------- 开发者 ----------------
-        private void DrawDev()
+        // ---------------- 旧版 · 开发者 ----------------
+        private void DrawLegacyDev()
         {
             Section("开发者模式");
             Cheats.devMode = GUILayout.Toggle(Cheats.devMode, " 开发者模式总开关（isDev=true）");
@@ -300,8 +455,8 @@ namespace RDTrainerMac
             }
         }
 
-        // ---------------- 高级（实验） ----------------
-        private void DrawAdvanced()
+        // ---------------- 旧版 · 高级（实验） ----------------
+        private void DrawLegacyAdvanced()
         {
             GUILayout.Label("⚠ 实验区：以下涉及场景跳转/底层状态，可能需在特定界面使用，个别可能不稳。出问题重进关卡或重启游戏即可。", Lbl());
 
@@ -419,11 +574,20 @@ namespace RDTrainerMac
 
         private static void SetAllLevelsToS()
         {
-            var s = Rank.FromString("S");
+            SetAllLevelsTo(Rank.FromString("S"));
+        }
+
+        private static void SetAllLevelsToSPlus()
+        {
+            SetAllLevelsTo(Rank.FromString("S+"));
+        }
+
+        private static void SetAllLevelsTo(Rank rank)
+        {
             foreach (Level lv in Enum.GetValues(typeof(Level)))
             {
                 if (lv == Level.None) continue;
-                try { Persistence.SetLevelRank(lv, s, true, true); } catch { }
+                try { Persistence.SetLevelRank(lv, rank, true, true); } catch { }
             }
             try { Persistence.SaveAll(); } catch { }
         }
@@ -450,7 +614,7 @@ namespace RDTrainerMac
 
         private static void Section(string title) => GUILayout.Label("── " + title + " ──", Hdr());
 
-        private static GUIStyle _hdr, _lbl;
+        private static GUIStyle _hdr, _lbl, _warn;
         private static GUIStyle Hdr()
         {
             if (_hdr == null) _hdr = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold };
@@ -460,6 +624,15 @@ namespace RDTrainerMac
         {
             if (_lbl == null) _lbl = new GUIStyle(GUI.skin.label) { wordWrap = true, fontSize = 11 };
             return _lbl;
+        }
+        private static GUIStyle Warn()
+        {
+            if (_warn == null)
+            {
+                _warn = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, wordWrap = true };
+                _warn.normal.textColor = new Color(1f, 0.45f, 0.35f);
+            }
+            return _warn;
         }
     }
 }
