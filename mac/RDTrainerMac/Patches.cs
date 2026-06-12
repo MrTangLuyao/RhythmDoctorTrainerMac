@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 
@@ -18,7 +15,6 @@ namespace RDTrainerMac
         public static float judgeMult = 3.0f;
         public static bool instantDialogue = false; // DebugSettings.InstantDialogue
         public static bool skipTransitions = false; // DebugSettings.SkipMenuTransitions
-        public static bool noFail = false;          // skip FailLevel
         public static bool unlimitedFps = false;    // DebugSettings.UnlimitedFramerate
         public static bool muteBeatSounds = false;  // DebugSettings.BeatSounds = !this
 
@@ -66,43 +62,6 @@ namespace RDTrainerMac
         {
             if (Cheats.widenJudge)
                 __result *= Mathf.Max(1f, Cheats.judgeMult);
-        }
-    }
-
-    // No-fail: neutralise every LevelBase.FailLevel(...) override across the game assembly.
-    [HarmonyPatch]
-    internal static class NoFailPatch
-    {
-        private static IEnumerable<MethodBase> TargetMethods()
-        {
-            var list = new List<MethodBase>();
-            Type[] types;
-            try { types = typeof(LevelBase).Assembly.GetTypes(); }
-            catch (ReflectionTypeLoadException e) { types = e.Types; }
-
-            foreach (var t in types)
-            {
-                if (t == null) continue;
-                MethodInfo m = null;
-                try
-                {
-                    m = t.GetMethod("FailLevel",
-                        BindingFlags.Public | BindingFlags.NonPublic |
-                        BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                }
-                catch { }
-                if (m != null && !m.IsAbstract && m.GetParameters().Length == 1)
-                    list.Add(m);
-            }
-            return list;
-        }
-
-        // No __result here on purpose: FailLevel comes in both bool (LevelBase family) and
-        // void (scnGame) forms. Returning false skips the original for BOTH; the bool ones
-        // then default to false (= not failed), which is exactly what we want.
-        private static bool Prefix()
-        {
-            return !Cheats.noFail;
         }
     }
 }

@@ -229,7 +229,6 @@ namespace RDTrainerMac
         {
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("秒通本关")) Run("WinLevel", () => { var g = scnGame.instance; if (g != null) g.WinLevel(); });
-            if (GUILayout.Button("跳过本关")) Run("SkipLevel", () => { var g = scnGame.instance; if (g != null) g.SkipLevel(); });
             if (GUILayout.Button("快速重开")) Run("Restart", () => { var g = scnGame.instance; if (g != null) g.Restart(false); });
             GUILayout.EndHorizontal();
 
@@ -248,7 +247,6 @@ namespace RDTrainerMac
             if (Cheats.autoplay)
                 Indent(() => Cheats.forceFlawless = GUILayout.Toggle(Cheats.forceFlawless, " 保留完美计算"));
 
-            Cheats.noFail = GUILayout.Toggle(Cheats.noFail, " 无敌");
             Cheats.instantDialogue = GUILayout.Toggle(Cheats.instantDialogue, " 瞬间对白");
             Cheats.devMode = GUILayout.Toggle(Cheats.devMode, " 开发者总开关");
             Cheats.debugMode = GUILayout.Toggle(Cheats.debugMode, " 调试模式（Debug Mode）");
@@ -376,7 +374,6 @@ namespace RDTrainerMac
 
             GUILayout.Space(8);
             Section("便利 / 玩法");
-            Cheats.noFail = GUILayout.Toggle(Cheats.noFail, " 无敌 — 不会失败/被打断");
             Cheats.instantDialogue = GUILayout.Toggle(Cheats.instantDialogue, " 瞬间对白 — 跳过剧情文本");
             Cheats.skipTransitions = GUILayout.Toggle(Cheats.skipTransitions, " 跳过菜单转场");
             Cheats.unlimitedFps = GUILayout.Toggle(Cheats.unlimitedFps, " 解锁帧率上限");
@@ -386,7 +383,6 @@ namespace RDTrainerMac
             Section("关卡控制（需在关卡内）");
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("秒通本关")) Run("WinLevel", () => { var g = scnGame.instance; if (g != null) g.WinLevel(); });
-            if (GUILayout.Button("跳过本关")) Run("SkipLevel", () => { var g = scnGame.instance; if (g != null) g.SkipLevel(); });
             GUILayout.EndHorizontal();
 
             GUILayout.Space(8);
